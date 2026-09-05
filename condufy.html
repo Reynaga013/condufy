@@ -54,7 +54,11 @@ body{
   transition:background .35s;
   display:flex;flex-direction:column;color:var(--ink);
 }
-.screen{flex:1;overflow-y:auto;overflow-x:hidden;position:relative;scrollbar-width:none;padding-top:14px}
+@media (max-width:480px){
+  body{padding:0;background:var(--bg)}
+  .phone{max-width:none;width:100vw;height:100dvh;border-radius:0;box-shadow:none}
+}
+.screen{flex:1;overflow-y:auto;overflow-x:hidden;position:relative;scrollbar-width:none;padding-top:calc(14px + env(safe-area-inset-top))}
 .screen::-webkit-scrollbar{display:none}
 .logo{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
 .logo svg{width:100%;height:100%;display:block}
@@ -79,7 +83,6 @@ body{
 .field-msg{font-size:12px;font-weight:600;margin-top:6px;min-height:14px}
 .field-msg.ok{color:var(--ok)}
 .field-msg.bad{color:var(--bad)}
-.google-note{text-align:center;font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5}
 .field{margin-bottom:20px}
 .field label{display:block;font-size:14px;font-weight:600;margin-bottom:8px}
 .input-wrap{display:flex;align-items:center;gap:8px;border-bottom:1.5px solid var(--line);padding:8px 2px}
@@ -89,9 +92,6 @@ body{
 .eye{margin-left:auto;cursor:pointer;color:var(--muted)}
 .enter-wrap{display:flex;justify-content:center;margin:30px 0}
 .btn-enter{background:var(--violet-soft);color:#fff;padding:10px 34px;border-radius:20px;font-size:16px;box-shadow:0 6px 16px rgba(47,111,237,.28)}
-.social{display:flex;flex-direction:column;gap:12px;margin-top:auto}
-.btn-social{display:flex;align-items:center;justify-content:center;gap:10px;background:var(--violet);color:#fff;padding:13px;border-radius:22px;font-size:14px;font-weight:700}
-.badge-ic{width:24px;height:24px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}
 .home-head{display:flex;align-items:center;gap:10px;padding:6px 22px 0}
 .home-head .logo{width:38px;height:38px}
 .home-head .wordmark{font-size:20px}
@@ -1248,10 +1248,6 @@ function viewLogin(){
       <div class="input-wrap">${icon('lock')}<input id="p" type="password" placeholder="Escribe tu contraseña">
         <span class="eye" id="eye">${icon('eye')}</span></div></div>
     <div class="enter-wrap"><button class="btn btn-enter" id="enter">${isSignup?'Crear cuenta':'Entrar'}</button></div>
-    <div class="social">
-      <button class="btn-social" id="google"><span class="badge-ic" style="color:#4285F4">G</span> Iniciar sesión con Google</button>
-    </div>
-    <div class="google-note">Inicio de sesión de demostración — un login real con Google necesita un servidor backend, algo que no es posible en este archivo independiente.</div>
     </div>`;
 }
 function bindLogin(){
@@ -1284,15 +1280,6 @@ function bindLogin(){
       if(!accs[name] || accs[name].provider==="npc" || accs[name].password!==pass){ toast("Usuario o contraseña incorrectos"); return; }
       logInAs(name);
     }
-  };
-  document.getElementById("google").onclick=()=>{
-    const accs=loadAccounts();
-    let name="mar.google";
-    if(!accs[name]){
-      accs[name]={username:"Mar", password:null, displayName:"Mar", friendCode:makeFriendCode(), avatarColor:"#4285F4", provider:"google", createdAt:Date.now()};
-      saveAccounts(accs);
-    }
-    logInAs(name);
   };
   document.getElementById("eye").onclick=()=>{ const p=document.getElementById("p"); p.type=p.type==="password"?"text":"password"; };
 }
