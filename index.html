@@ -92,6 +92,13 @@ body{
 .eye{margin-left:auto;cursor:pointer;color:var(--muted)}
 .enter-wrap{display:flex;justify-content:center;margin:30px 0}
 .btn-enter{background:var(--violet-soft);color:#fff;padding:10px 34px;border-radius:20px;font-size:16px;box-shadow:0 6px 16px rgba(47,111,237,.28)}
+.btn-enter:disabled,.btn-social:disabled{opacity:.55;cursor:not-allowed}
+.forgot-pass{font-size:12.5px;font-weight:700;color:var(--violet);text-align:right;margin-top:8px;cursor:pointer}
+.auth-error{font-size:13px;font-weight:600;color:var(--bad);text-align:center;min-height:16px;margin:-8px 0 4px}
+.divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;font-weight:700;margin:2px 0 16px}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
+.btn-social{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;background:var(--panel);color:var(--ink);padding:13px;border-radius:16px;font-size:14.5px;font-weight:700;border:1.5px solid var(--line);cursor:pointer;font-family:inherit}
+.badge-ic{font-weight:800;font-size:16px}
 .home-head{display:flex;align-items:center;gap:10px;padding:6px 22px 0}
 .home-head .logo{width:38px;height:38px}
 .home-head .wordmark{font-size:20px}
@@ -300,7 +307,51 @@ body{
   <div class="toast" id="toast"></div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
+/* ============ FIREBASE ============
+   1) Ve a https://console.firebase.google.com/ y crea un proyecto (p.ej. "condufy").
+   2) Compilación > Authentication > Sign-in method: activa "Correo electrónico/contraseña" y "Google".
+   3) Compilación > Firestore Database > Crear base de datos (modo producción, región eu-west1 por ejemplo).
+   4) Configuración del proyecto (icono ⚙️ arriba a la izq.) > baja hasta "Tus apps" > icono </> (Web) >
+      registra la app "Condufy" > copia el objeto firebaseConfig que te da y pégalo aquí abajo. */
+const firebaseConfig = {
+  apiKey: "TU_API_KEY",
+  authDomain: "TU_PROYECTO.firebaseapp.com",
+  projectId: "TU_PROYECTO",
+  storageBucket: "TU_PROYECTO.appspot.com",
+  messagingSenderId: "TU_SENDER_ID",
+  appId: "TU_APP_ID"
+};
+const fbReady = !!(firebaseConfig.apiKey && firebaseConfig.apiKey !== "TU_API_KEY");
+let auth = null, db = null;
+if(fbReady){
+  try{
+    firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    db = firebase.firestore();
+    auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
+  }catch(e){ console.error("Error iniciando Firebase:", e); }
+}
+function authErrorMessage(err){
+  const map = {
+    "auth/invalid-email":"Ese correo no es válido.",
+    "auth/user-not-found":"No existe ninguna cuenta con ese correo.",
+    "auth/wrong-password":"Contraseña incorrecta.",
+    "auth/invalid-credential":"Correo o contraseña incorrectos.",
+    "auth/email-already-in-use":"Ya existe una cuenta con ese correo.",
+    "auth/weak-password":"La contraseña debe tener al menos 6 caracteres.",
+    "auth/too-many-requests":"Demasiados intentos. Prueba de nuevo en unos minutos.",
+    "auth/network-request-failed":"No hay conexión a internet.",
+    "auth/popup-closed-by-user":"Se canceló el inicio de sesión.",
+    "auth/operation-not-allowed":"Ese método de acceso no está activado en Firebase todavía.",
+    "auth/account-exists-with-different-credential":"Ya existe una cuenta con ese correo usando otro método de acceso.",
+  };
+  return (err && map[err.code]) || "Ha ocurrido un error. Inténtalo de nuevo.";
+}
+
 /* ============ LOGO ============ */
 const LOGO_SVG = `<svg viewBox="0 0 100 100" fill="none">
   <defs><linearGradient id="condufyGrad" x1="10" y1="4" x2="90" y2="84" gradientUnits="userSpaceOnUse">
@@ -354,8 +405,8 @@ function signBadge(type,label){
 
 /* ============ STATE ============ */
 const XP_PER_LEVEL = 1000;
-const ACCOUNTS_KEY = "condufy_accounts_v1";
-const SESSION_KEY = "condufy_session_v1";
+const ACCOUNTS_KEY = "condufy_accounts_v1"; // solo para los amigos de demostración (npc), ya no para cuentas reales
+const LAST_UID_KEY = "condufy_last_uid_v1";
 function loadAccounts(){ try{ return JSON.parse(localStorage.getItem(ACCOUNTS_KEY))||{}; }catch(e){ return {}; } }
 function saveAccounts(a){ try{ localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(a)); }catch(e){} }
 function stateKey(u){ return "condufy_state_v1:"+u; }
@@ -383,6 +434,7 @@ function freshState(){
     theme_dark_owned:false, theme_gold_owned:false, goldActive:false,
     onboarded:false, disclaimerAccepted:false, reminders:true, level:null,
     friends:["laia","bruno","nora","pol"],
+    friendCode:null, provider:"local", email:"", updatedAt:0,
     activeLesson:null, exIndex:0, exStartTime:0, sessionXp:0, sessionGems:0,
     testHistory:{coche:{}, moto:{}},
   };
@@ -395,6 +447,8 @@ function migrateState(s){
   if(!s.onboardedTracks) s.onboardedTracks = s.onboarded ? {coche:true} : {};
   if(!s.testHistory) s.testHistory = {coche:{}, moto:{}};
   if(s.disclaimerAccepted===undefined) s.disclaimerAccepted=false;
+  if(!s.friendCode) s.friendCode = null;
+  if(!s.provider) s.provider = "local";
   return s;
 }
 function completed(){ return S.completed[S.track]; }
@@ -405,19 +459,86 @@ function setTrack(track){
 ensureDemoAccounts();
 
 let S;
-const _session = (()=>{ try{ return localStorage.getItem(SESSION_KEY); }catch(e){ return null; } })();
-const _accounts = loadAccounts();
-if(_session && _accounts[_session]){
-  S = migrateState(Object.assign(freshState(), loadState(_session)||{}));
-  S.username = _session;
-  S.user = _accounts[_session].displayName || _accounts[_session].username;
+let friendProfileCache = {}; // uid -> {name, xp, color}, cache de amigos reales cargados desde Firestore
+const _lastUid = (()=>{ try{ return localStorage.getItem(LAST_UID_KEY); }catch(e){ return null; } })();
+if(_lastUid){
+  // Pintado optimista con la última copia local mientras Firebase confirma la sesión en segundo plano
+  S = migrateState(Object.assign(freshState(), loadState(_lastUid)||{}));
+  S.username = _lastUid;
   S.screen = "home";
 } else {
   S = freshState();
   S.username = null;
   S.user = "";
 }
-function save(){ if(!S.username) return; try{ saveState(S.username, S); }catch(e){} }
+let _cloudSaveTimer=null;
+function save(){
+  if(!S.username) return;
+  S.updatedAt = Date.now();
+  try{ saveState(S.username, S); }catch(e){}
+  if(!fbReady) return;
+  clearTimeout(_cloudSaveTimer);
+  _cloudSaveTimer = setTimeout(syncToCloud, 900);
+}
+function syncToCloud(){
+  if(!fbReady || !S.username || !auth.currentUser || auth.currentUser.uid!==S.username) return;
+  db.collection("users").doc(S.username).set(S, {merge:true}).catch(e=>console.error("Error guardando en Firestore:", e));
+  db.collection("profiles").doc(S.username).set({
+    displayName: S.user, avatarColor:"#2F6FED", xp: S.xp, friendCode: S.friendCode||"", updatedAt: S.updatedAt
+  }, {merge:true}).catch(e=>console.error("Error guardando perfil público:", e));
+}
+function loadOrCreateUserDoc(uid){
+  const local = loadState(uid);
+  if(!fbReady) return Promise.resolve(local||{});
+  return db.collection("users").doc(uid).get().then(doc=>{
+    if(doc.exists){
+      const cloud = doc.data();
+      if(local && local.updatedAt && cloud.updatedAt && local.updatedAt > cloud.updatedAt) return local;
+      return cloud;
+    }
+    return local || {};
+  }).catch(()=> local || {});
+}
+function onAuthReady(user, opts){
+  opts = opts || {};
+  return loadOrCreateUserDoc(user.uid).then(state=>{
+    S = migrateState(Object.assign(freshState(), state||{}));
+    S.username = user.uid;
+    S.user = state.user || user.displayName || opts.name || (user.email||"").split("@")[0] || "Tú";
+    S.email = user.email || "";
+    S.provider = (user.providerData[0] && user.providerData[0].providerId==="google.com") ? "google" : "local";
+    if(!S.friendCode) S.friendCode = makeFriendCode();
+    S.screen = "home"; S.tab = "home"; authMode = "login";
+    setTrack(S.track);
+    try{ localStorage.setItem(LAST_UID_KEY, user.uid); }catch(e){}
+    save();
+    if(!S.onboarded){ openOnboarding(); } else { render(); }
+  }).catch(err=>{
+    console.error("No se pudo cargar la cuenta:", err);
+    toast("No se pudo cargar tu cuenta. Comprueba tu conexión.");
+    S.screen="login"; render();
+  });
+}
+function signOutAndReset(){
+  S = freshState();
+  S.username = null; S.user = "";
+  authMode = "login";
+  try{ localStorage.removeItem(LAST_UID_KEY); }catch(e){}
+  render();
+}
+if(fbReady){
+  auth.getRedirectResult().catch(err=>{
+    console.error("Error en el redirect de Google:", err);
+    toast(authErrorMessage(err));
+  });
+  auth.onAuthStateChanged(user=>{
+    if(user && S.username!==user.uid){
+      onAuthReady(user, {isNew:false});
+    } else if(!user && S.username){
+      signOutAndReset();
+    }
+  });
+}
 
 const level = ()=> Math.floor(S.xp/XP_PER_LEVEL)+1;
 const xpInLevel = ()=> S.xp % XP_PER_LEVEL;
@@ -1231,8 +1352,9 @@ function finishOnboarding(){
   render();
 }
 
-/* ---------- LOGIN / SIGNUP ---------- */
+/* ---------- LOGIN / SIGNUP (Firebase Authentication) ---------- */
 let authMode = "login";
+let authBusy = false;
 function viewLogin(){
   const isSignup = authMode==="signup";
   return `<div class="pad" style="display:flex;flex-direction:column;min-height:100%">
@@ -1241,60 +1363,73 @@ function viewLogin(){
       <button class="auth-tab ${!isSignup?'active':''}" id="tabLogin">Login</button>
       <button class="auth-tab ${isSignup?'active':''}" id="tabSignup">Crear cuenta</button>
     </div>
-    <div class="field"><label>Usuario</label>
-      <div class="input-wrap">${icon('user')}<input id="u" placeholder="Escribe tu usuario" autocapitalize="off" autocomplete="off"></div>
+    ${isSignup?`<div class="field"><label>Nombre</label>
+      <div class="input-wrap">${icon('user')}<input id="name" placeholder="¿Cómo te llamas?" autocomplete="name"></div></div>`:``}
+    <div class="field"><label>Correo electrónico</label>
+      <div class="input-wrap">${icon('user')}<input id="u" type="email" placeholder="tucorreo@ejemplo.com" autocapitalize="off" autocomplete="email"></div>
       <div class="field-msg" id="uMsg"></div></div>
     <div class="field"><label>Contraseña</label>
-      <div class="input-wrap">${icon('lock')}<input id="p" type="password" placeholder="Escribe tu contraseña">
-        <span class="eye" id="eye">${icon('eye')}</span></div></div>
+      <div class="input-wrap">${icon('lock')}<input id="p" type="password" placeholder="Escribe tu contraseña" autocomplete="${isSignup?'new-password':'current-password'}">
+        <span class="eye" id="eye">${icon('eye')}</span></div>
+      ${!isSignup?`<div class="forgot-pass" id="forgotPass">¿Olvidaste tu contraseña?</div>`:``}</div>
+    <div class="auth-error" id="authError"></div>
     <div class="enter-wrap"><button class="btn btn-enter" id="enter">${isSignup?'Crear cuenta':'Entrar'}</button></div>
+    <div class="divider">o</div>
+    <div class="social"><button class="btn-social" id="google"><span class="badge-ic" style="color:#4285F4">G</span> Continuar con Google</button></div>
     </div>`;
 }
 function bindLogin(){
-  const uInput=document.getElementById("u"), uMsg=document.getElementById("uMsg");
+  const uInput=document.getElementById("u");
+  const errEl=document.getElementById("authError");
+  const enterBtn=document.getElementById("enter");
+  const googleBtn=document.getElementById("google");
+  const forgotEl=document.getElementById("forgotPass");
   document.getElementById("tabLogin").onclick=()=>{ authMode="login"; render(); };
   document.getElementById("tabSignup").onclick=()=>{ authMode="signup"; render(); };
-  if(authMode==="signup"){
-    uInput.oninput=()=>{
-      const name=uInput.value.trim().toLowerCase();
-      if(!name){ uMsg.textContent=""; return; }
-      if(!/^[a-z0-9_]{3,16}$/.test(name)){ uMsg.textContent="3-16 caracteres: letras, números y guion bajo"; uMsg.className="field-msg bad"; return; }
-      const accs=loadAccounts();
-      if(accs[name]){ uMsg.textContent="Ese nombre de usuario ya está cogido"; uMsg.className="field-msg bad"; }
-      else { uMsg.textContent="Nombre de usuario disponible"; uMsg.className="field-msg ok"; }
-    };
+  document.getElementById("eye").onclick=()=>{ const p=document.getElementById("p"); p.type=p.type==="password"?"text":"password"; };
+  function setBusy(b){
+    authBusy=b;
+    enterBtn.disabled=b; if(googleBtn) googleBtn.disabled=b;
+    enterBtn.textContent = b ? "Un momento..." : (authMode==="signup"?"Crear cuenta":"Entrar");
   }
-  document.getElementById("enter").onclick=()=>{
-    const nameRaw=uInput.value.trim();
-    const name=nameRaw.toLowerCase();
+  if(forgotEl) forgotEl.onclick=()=>{
+    const email=uInput.value.trim();
+    if(!fbReady){ errEl.textContent="Firebase no está configurado todavía en este archivo."; return; }
+    if(!email){ errEl.textContent="Escribe tu correo arriba y vuelve a pulsar"; return; }
+    auth.sendPasswordResetEmail(email)
+      .then(()=>toast("Te hemos enviado un enlace a tu correo para restablecer la contraseña"))
+      .catch(err=>{ errEl.textContent=authErrorMessage(err); });
+  };
+  enterBtn.onclick=()=>{
+    if(authBusy) return;
+    errEl.textContent="";
+    if(!fbReady){ errEl.textContent="Firebase no está configurado todavía en este archivo (firebaseConfig)."; return; }
+    const email=uInput.value.trim();
     const pass=document.getElementById("p").value;
-    const accs=loadAccounts();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ errEl.textContent="Escribe un correo válido"; return; }
+    if(pass.length<6){ errEl.textContent="La contraseña debe tener al menos 6 caracteres"; return; }
     if(authMode==="signup"){
-      if(!/^[a-z0-9_]{3,16}$/.test(name)){ toast("3-16 caracteres: letras, números y guion bajo"); return; }
-      if(accs[name]){ toast("Ese nombre de usuario ya está cogido"); return; }
-      if(pass.length<4){ toast("La contraseña debe tener al menos 4 caracteres"); return; }
-      accs[name]={username:nameRaw, password:pass, displayName:nameRaw, friendCode:makeFriendCode(), avatarColor:"#2F6FED", provider:"local", createdAt:Date.now()};
-      saveAccounts(accs);
-      logInAs(name);
+      const name=document.getElementById("name").value.trim();
+      if(!name){ errEl.textContent="Escribe tu nombre"; return; }
+      setBusy(true);
+      auth.createUserWithEmailAndPassword(email,pass)
+        .then(cred=>cred.user.updateProfile({displayName:name}).then(()=>onAuthReady(cred.user,{isNew:true,name})))
+        .catch(err=>{ setBusy(false); errEl.textContent=authErrorMessage(err); });
     } else {
-      if(!accs[name] || accs[name].provider==="npc" || accs[name].password!==pass){ toast("Usuario o contraseña incorrectos"); return; }
-      logInAs(name);
+      setBusy(true);
+      auth.signInWithEmailAndPassword(email,pass)
+        .then(cred=>onAuthReady(cred.user,{isNew:false}))
+        .catch(err=>{ setBusy(false); errEl.textContent=authErrorMessage(err); });
     }
   };
-  document.getElementById("eye").onclick=()=>{ const p=document.getElementById("p"); p.type=p.type==="password"?"text":"password"; };
-}
-function logInAs(usernameKey){
-  const accs=loadAccounts();
-  const acc=accs[usernameKey];
-  const existing = loadState(usernameKey);
-  S = migrateState(Object.assign(freshState(), existing||{}));
-  S.username = usernameKey;
-  S.user = acc.displayName || acc.username;
-  S.screen="home"; S.tab="home";
-  setTrack(S.track);
-  try{ localStorage.setItem(SESSION_KEY, usernameKey); }catch(e){}
-  save();
-  if(!S.onboarded){ openOnboarding(); } else { render(); }
+  if(googleBtn) googleBtn.onclick=()=>{
+    if(authBusy) return;
+    errEl.textContent="";
+    if(!fbReady){ errEl.textContent="Firebase no está configurado todavía en este archivo (firebaseConfig)."; return; }
+    setBusy(true);
+    const provider=new firebase.auth.GoogleAuthProvider();
+    auth.signInWithRedirect(provider).catch(err=>{ setBusy(false); errEl.textContent=authErrorMessage(err); });
+  };
 }
 
 /* ---------- HOME (ruta "Aprende") ---------- */
@@ -1676,16 +1811,39 @@ function buy(id,cost,btn){
 
 /* ---------- AMIGOS / clasificación ---------- */
 function friendXp(usernameKey, accs){
-  const acc = accs[usernameKey]; if(!acc) return 0;
-  if(acc.demoXp!==undefined) return acc.demoXp;
-  const st = loadState(usernameKey);
-  return st ? (st.xp||0) : 0;
+  const acc = accs[usernameKey];
+  if(acc) return acc.demoXp!==undefined ? acc.demoXp : 0;
+  const p = friendProfileCache[usernameKey];
+  return p ? (p.xp||0) : 0;
+}
+function friendDisplay(usernameKey, accs){
+  const acc = accs[usernameKey];
+  if(acc) return { n: acc.displayName||acc.username, c: acc.avatarColor||"#2F6FED" };
+  const p = friendProfileCache[usernameKey];
+  return { n: (p&&p.name) || "Amigo", c: (p&&p.color) || "#2F6FED" };
+}
+function refreshFriendProfiles(){
+  if(!fbReady || !db || !S.friends || !S.friends.length) return;
+  const accs=loadAccounts();
+  const realUids = S.friends.filter(u=>!accs[u]);
+  if(!realUids.length) return;
+  const chunks=[]; for(let i=0;i<realUids.length;i+=10) chunks.push(realUids.slice(i,i+10));
+  Promise.all(chunks.map(chunk=>
+    db.collection("profiles").where(firebase.firestore.FieldPath.documentId(),"in",chunk).get()
+  )).then(snaps=>{
+    snaps.forEach(snap=>snap.forEach(doc=>{
+      const d=doc.data();
+      friendProfileCache[doc.id]={ name:d.displayName||"Amigo", xp:d.xp||0, color:d.avatarColor||"#2F6FED" };
+    }));
+    if(S.screen==="home" && S.tab==="social") render();
+  }).catch(e=>console.error("No se pudieron cargar los amigos:", e));
 }
 function viewSocial(){
   const accs=loadAccounts();
-  const list = (S.friends||[]).filter(u=>accs[u]).map(u=>({
-    n: accs[u].displayName||accs[u].username, xp: friendXp(u,accs), c: accs[u].avatarColor||"#2F6FED",
-  }));
+  const list = (S.friends||[]).map(u=>{
+    const d=friendDisplay(u,accs);
+    return { n:d.n, xp:friendXp(u,accs), c:d.c };
+  });
   list.push({n:S.user, xp:S.xp, c:"#2F6FED", me:true});
   list.sort((a,b)=>b.xp-a.xp);
   const rows=list.map((f,i)=>`<div class="lb-row ${f.me?'me':''}">
@@ -1693,7 +1851,7 @@ function viewSocial(){
     <div class="lb-av" style="background:${f.c}">${f.n[0].toUpperCase()}</div>
     <div class="lb-name">${f.n}${f.me?' (tú)':''}</div>
     <div class="lb-xp">${f.xp} XP</div></div>`).join("");
-  const myCode = S.username && accs[S.username] ? accs[S.username].friendCode : "";
+  const myCode = S.friendCode || "";
   return `<div class="page"><h1>Amigos</h1><div class="lead">Clasificación de esta semana.</div>
     <button class="btn btn-ghost" id="openAddFriend" style="margin-bottom:14px">+ Añadir amigo</button>
     <div id="addFriendBox"></div>
@@ -1701,12 +1859,13 @@ function viewSocial(){
     ${rows}</div>`;
 }
 function bindSocial(){
+  refreshFriendProfiles();
   const btn=document.getElementById("openAddFriend");
   if(!btn) return;
   btn.onclick=()=>{
     const box=document.getElementById("addFriendBox");
     box.innerHTML=`<div class="add-friend-box">
-      <input id="friendSearch" class="type-in" style="font-family:inherit;border:2px solid var(--line);border-radius:15px;padding:15px 18px;width:100%;background:var(--code-bg);color:var(--ink)" placeholder="Usuario o código de amigo">
+      <input id="friendSearch" class="type-in" style="font-family:inherit;border:2px solid var(--line);border-radius:15px;padding:15px 18px;width:100%;background:var(--code-bg);color:var(--ink)" placeholder="Código de amigo (p.ej. CND-AB12C)">
       <div style="display:flex;gap:10px;margin-top:10px">
         <button class="btn btn-primary" id="doSearch" style="flex:1">Buscar</button>
         <button class="btn btn-ghost" id="cancelSearch" style="flex:1">Cancelar</button>
@@ -1715,24 +1874,37 @@ function bindSocial(){
     </div>`;
     document.getElementById("cancelSearch").onclick=()=>{ box.innerHTML=""; };
     document.getElementById("doSearch").onclick=()=>{
-      const q=document.getElementById("friendSearch").value.trim().toLowerCase();
+      const raw=document.getElementById("friendSearch").value.trim();
+      const q=raw.toLowerCase();
       const resEl=document.getElementById("searchResult");
       if(!q){ return; }
       const accs=loadAccounts();
+      const showResult=(foundKey, name, color)=>{
+        if(!foundKey){ resEl.innerHTML=`<div class="field-msg bad" style="margin-top:10px">No se ha encontrado ningún usuario con ese código</div>`; return; }
+        if(foundKey===S.username){ resEl.innerHTML=`<div class="field-msg bad" style="margin-top:10px">Ese es tu propio código</div>`; return; }
+        if((S.friends||[]).includes(foundKey)){ resEl.innerHTML=`<div class="field-msg bad" style="margin-top:10px">Ya sois amigos</div>`; return; }
+        resEl.innerHTML=`<div class="shop-item" style="margin-top:10px">
+          <div class="shop-emoji" style="background:${color||'#2F6FED'};color:#fff;font-weight:800">${(name||"?")[0].toUpperCase()}</div>
+          <div class="shop-info"><div class="t">${name}</div></div>
+          <button class="buy" id="confirmAdd">Añadir amigo</button></div>`;
+        document.getElementById("confirmAdd").onclick=()=>{
+          S.friends = S.friends||[]; S.friends.push(foundKey); save();
+          toast("¡Amigo añadido!"); box.innerHTML=""; render();
+        };
+      };
+      // primero, los amigos de demostración locales
       let foundKey=null;
       for(const key in accs){ if(key===q || (accs[key].friendCode||"").toLowerCase()===q){ foundKey=key; break; } }
-      if(!foundKey){ resEl.innerHTML=`<div class="field-msg bad" style="margin-top:10px">No se ha encontrado ningún usuario con ese nombre o código</div>`; return; }
-      if(foundKey===S.username){ resEl.innerHTML=`<div class="field-msg bad" style="margin-top:10px">Esa es tu propia cuenta</div>`; return; }
-      if((S.friends||[]).includes(foundKey)){ resEl.innerHTML=`<div class="field-msg bad" style="margin-top:10px">Ya sois amigos</div>`; return; }
-      const acc=accs[foundKey];
-      resEl.innerHTML=`<div class="shop-item" style="margin-top:10px">
-        <div class="shop-emoji" style="background:${acc.avatarColor||'#2F6FED'};color:#fff;font-weight:800">${(acc.displayName||acc.username)[0].toUpperCase()}</div>
-        <div class="shop-info"><div class="t">${acc.displayName||acc.username}</div></div>
-        <button class="buy" id="confirmAdd">Añadir amigo</button></div>`;
-      document.getElementById("confirmAdd").onclick=()=>{
-        S.friends = S.friends||[]; S.friends.push(foundKey); save();
-        toast("¡Amigo añadido!"); box.innerHTML=""; render();
-      };
+      if(foundKey){ const acc=accs[foundKey]; showResult(foundKey, acc.displayName||acc.username, acc.avatarColor); return; }
+      // si no, buscamos en Firestore por código de amigo real
+      if(!fbReady || !db){ showResult(null); return; }
+      resEl.innerHTML=`<div class="field-msg" style="margin-top:10px">Buscando...</div>`;
+      db.collection("profiles").where("friendCode","==",raw.toUpperCase()).limit(1).get().then(snap=>{
+        if(snap.empty){ showResult(null); return; }
+        const doc=snap.docs[0], d=doc.data();
+        friendProfileCache[doc.id] = { name:d.displayName||"Amigo", xp:d.xp||0, color:d.avatarColor||"#2F6FED" };
+        showResult(doc.id, d.displayName||"Amigo", d.avatarColor);
+      }).catch(()=>{ resEl.innerHTML=`<div class="field-msg bad" style="margin-top:10px">Error de conexión, inténtalo de nuevo</div>`; });
     };
   };
 }
@@ -1740,14 +1912,12 @@ function bindSocial(){
 /* ---------- PERFIL ---------- */
 function viewProfile(){
   const done=Object.values(completed()).filter(Boolean).length;
-  const accs=loadAccounts();
-  const myAcc = S.username ? accs[S.username] : null;
-  const providerBadge = myAcc && myAcc.provider==="google" ? " · Google" : "";
+  const providerBadge = S.provider==="google" ? " · Google" : "";
   return `<div class="page">
     <div class="profile-hero">
       <div class="big-av">${S.user[0].toUpperCase()}</div>
       <div class="pname">${S.user}</div><div class="pjoin">${S.level?S.level+' · ':''}Nivel ${level()}${providerBadge}</div>
-      ${myAcc?`<div class="my-code" style="margin-top:6px">Tu código de amigo: <b>${myAcc.friendCode}</b></div>`:''}
+      ${S.friendCode?`<div class="my-code" style="margin-top:6px">Tu código de amigo: <b>${S.friendCode}</b></div>`:''}
     </div>
     <div class="grid2">
       <div class="gcard"><div class="gv" style="color:var(--violet)">${S.xp}</div><div class="gl">XP total</div></div>
@@ -1772,11 +1942,8 @@ function viewProfile(){
   </div>`;
 }
 function logout(){
-  try{ localStorage.removeItem(SESSION_KEY); }catch(e){}
-  S = freshState();
-  S.username = null; S.user = "";
-  authMode = "login";
-  render();
+  if(fbReady && auth) auth.signOut().catch(()=>{});
+  signOutAndReset();
 }
 
 /* ============ HELPERS ============ */
