@@ -338,6 +338,37 @@ if(fbReady){
     fbReady = false; auth = null; db = null;
   }
 }
+
+  /* ---------- registro de uso (panel privado) -------------------------
+   * Deja constancia de que esta cuenta ha abierto la app hoy, para el panel
+   * de uso. Solo se guarda el uid (que ya es la clave de este usuario aqui),
+   * la fecha y un contador: ni nombres, ni correos, ni nada del contenido.
+   * Como mucho una escritura cada 15 minutos por dispositivo, y si falla se
+   * ignora en silencio: medir el uso nunca puede romper la app.
+   * ------------------------------------------------------------------- */
+function registrarActividad(uid){
+  if(!fbReady || !db || !uid) return;
+  var hoy = new Intl.DateTimeFormat('en-CA', {timeZone:'Europe/Madrid',
+    year:'numeric', month:'2-digit', day:'2-digit'}).format(new Date());
+  try {
+    var previo = JSON.parse(localStorage.getItem('actividad.'+uid) || 'null');
+    if(previo && previo.dia === hoy && Date.now()-previo.ts < 15*60000) return;
+    localStorage.setItem('actividad.'+uid, JSON.stringify({dia:hoy, ts:Date.now()}));
+  } catch(e){}
+  db.collection('_actividad').doc(uid).set({
+    ultimaVez: firebase.firestore.FieldValue.serverTimestamp(),
+    dias: firebase.firestore.FieldValue.arrayUnion(hoy),
+    sesiones: firebase.firestore.FieldValue.increment(1)
+  }, {merge:true}).catch(function(){});
+}
+if(fbReady && auth){
+  auth.onAuthStateChanged(function(u){ if(u) registrarActividad(u.uid); });
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'visible' && auth.currentUser){
+      registrarActividad(auth.currentUser.uid);
+    }
+  });
+}
 function authErrorMessage(err){
   const map = {
     "auth/invalid-email":"Ese correo no es válido.",
